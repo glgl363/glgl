@@ -1,0 +1,439 @@
+rm(list = ls()) 
+options()$repos
+options("repos" = c(CRAN="https://mirrors.tuna.tsinghua.edu.cn/CRAN/"))
+options()$BioC_mirror
+options(BioC_mirror="https://mirrors.ustc.edu.cn/bioc/")
+options("repos" = c(CRAN="https://mirrors.tuna.tsinghua.edu.cn/CRAN/"))
+library(GEOquery)
+setwd("C:/Users/23802/Desktop/new/GSE98793")
+GSE47908_sm <- getGEO(GEO = "GSE47908",
+                      filename = "GSE47908_series_matrix.txt.gz", # 读取本地文件
+                      getGPL = F)
+GSE47908_expr <- exprs(GSE47908_sm)
+GSE47908_pd <- pData(GSE47908_sm)
+GSE47908_expr[is.na(GSE47908_expr)] <- 0
+range(GSE47908_expr)
+length(GSE47908_expr[GSE47908_expr < 0])
+GSE47908_expr[GSE47908_expr < 0] <- 0 
+range(GSE47908_expr)
+library(magrittr)
+library(limma)
+pdata1 <- GSE47908_pd
+colnames(pdata1) 
+unique(pdata1$"title")
+unique(pdata1$"platform_id") 
+library(dplyr)
+group1 <- pdata1 %>% 
+  dplyr::select(ID = "geo_accession", group0 = "title") %>% 
+  dplyr::mutate(group = dplyr::case_when
+    grepl("whole_blood_control", group0) ~ "normal",
+    grepl("whole_blood_case", group0) ~ "UC"
+  dplyr::select(1,3) %>% 
+  dplyr::filter(group == "normal" | group == "UC") %>% 
+  dplyr::arrange(desc(group)) 
+dir.create("GSE33630") 
+data.table::fwrite(group1, "GSE33630/GSE33630_group.csv", row.names = F) 
+library(data.table) 
+GPL1 <- fread('GPL570-55999.txt') 
+colnames(GPL1) 
+gpl1 <- GPL1 %>% dplyr::select("ID", "Gene Symbol") %>% 
+  dplyr::filter(!grepl("///", .$"Gene Symbol")) %>% 
+  dplyr::filter(.$"Gene Symbol" != "") %>% 
+  dplyr::filter(!grepl("---", .$"Gene Symbol")) %>%
+  dplyr::mutate(ID = as.character(ID)) %>% 
+  dplyr::rename(GENE_SYMBOL = "Gene Symbol") 
+data1 <- GSE32863_expr 
+ID <- rownames(data1) %>% as.character() 
+data1 <- data1[,group1$ID] %>% 
+  apply(2, as.numeric) %>% 
+  data.frame() %>% 
+  cbind(ID = ID, .) %>% 
+  dplyr::left_join(., gpl1, by = "ID") %>%
+  aggregate(x = ., by = .$GENE_SYMBOL %>% list(), FUN = mean) %>% 
+  tibble::remove_rownames() %>% ## 移除行名
+  tibble::column_to_rownames("Group.1") %>% 
+  dplyr::select(-c("ID","GENE_SYMBOL"))
+exprSet <- data1
+range(exprSet) 
+exprSet <- as.data.frame(exprSet)
+ex <- exprSet
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+  (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+  (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+if (LogC) {
+  for(i in 1:ncol(ex)){
+    ex[which(ex[,i] < 0),i] <- NaN
+  }
+  exprSet <- log2(ex + 1) ## 将ex进行log2+1转化
+  print("log2 transform finished")
+}else{
+  print("log2 transform not needed")
+}
+boxplot(data1, outline = F, las = 2) 
+library(limma)
+data1_norm <- normalizeBetweenArrays(data1) %>% 
+  data.frame()
+boxplot(data1_norm, outline = F, las = 2)
+data.table::fwrite(data1_norm, "GSE33630/GSE33630_Matrix_norm.csv", row.names = T)
+#####################################################################
+setwd("C:\\Users\\23802\\Desktop\\UC")
+dir()
+group1 <- read.csv("GSE82107_group.csv", header = TRUE)
+group2 <- read.csv("GSE117999_group.csv", header = TRUE)
+data1_norm <- read.csv("GSE82107_Matrix_norm.csv", header = TRUE)
+data2_norm <- read.csv("GSE117999_Matrix_norm.csv", header = TRUE)
+data1_norm <- data.frame(data1_norm[,-1], row.names = data1_norm[,1])
+data2_norm <- data.frame(data2_norm[,-1], row.names = data2_norm[,1])
+length(group1$group)
+length(which(group1$group %in% "tumor"))
+length(which(group1$group %in% "normal")) 
+
+length(group2$group)
+length(which(group2$group %in% "tumor"))
+length(which(group2$group %in% "normal")) 
+
+aa <- intersect(rownames(data1_norm),rownames(data2_norm))
+data1<-data1_norm[aa,]
+data2<-data2_norm[aa,]
+count_matrix <- cbind(data1,data2)
+count_matrix<-na.omit(count_matrix)
+
+A <- "GSE46750"
+B <- "GSE98918"
+gs <- factor( c(rep(A, length(group1$group)),
+                rep(B, length(group2$group)),
+              levels= c(A,B)))
+groups <- make.names(c(A,B))
+palette(c("#b2b9f5","#83fcb4"))
+
+pdf("Boxplot_Before.pdf", width = 12, height = 8)
+par(mar=c(4,7,2,2))
+boxplot(count_matrix, boxwex = 0.6, notch = T, horizontal = F, 
+        outline=F, las=2, col=gs, border = gs)
+legend("top", groups, fill = palette(), bty ="n")
+dev.off()
+library(sva)
+library(tidyverse)
+library(limma)
+library(locfit)
+batch <- c(rep("1", length(group1$group)),
+           rep("2", length(group2$group)))
+adjusted_counts <- ComBat(count_matrix, batch=batch) 
+
+adjusted_counts <- normalizeBetweenArrays(adjusted_counts)
+
+pdf("Boxplot_after.pdf",width = 12,height =8)
+par(mar=c(4,7,2,2))
+boxplot(adjusted_counts, boxwex=0.6, notch=T, horizontal=F,
+        outline=FALSE, las=2, col=gs,border = gs)
+legend("topright", groups, fill=palette(), bty="n")
+dev.off()
+
+adjusted_group <- rbind(group1, group2)
+adjusted_group_sort <- adjusted_group[order(adjusted_group$group, decreasing = F),] 
+length(which(adjusted_group_sort$group %in% "normal")) 
+length(which(adjusted_group_sort$group %in% "tumor")) 
+write.csv(adjusted_group_sort,"Combined_Datasets_Group.csv",row.names = F)
+write.csv(adjusted_counts, "Combined_Datasets_Matrix.csv")
+
+library(FactoMineR)
+library(factoextra)
+
+count_matrix<-as.matrix(t(count_matrix))
+cla <-c(rep(A, length(group1$group)),
+        rep(B, length(group2$group)))
+iris.pca <- PCA(count_matrix,graph = F)
+
+pdf("PCA_Before.pdf",width = 6,height = 4.5)
+ind.p<-fviz_pca_ind(iris.pca,geom.ind = "point", col.ind = cla, 
+                    palette = c("#b2b9f5","#83fcb4"),
+                    addEllipses = TRUE, 
+                    legend.title = "groups" )
+ggpubr::ggpar(ind.p,title = "")
+dev.off()
+
+adjusted_counts<-as.matrix(t(adjusted_counts))
+cla <-c(rep(A, length(group1$group)),
+        rep(B, length(group2$group)))
+iris.pca <- PCA(adjusted_counts,graph =F)
+pdf("PCA_After.pdf",width = 6,height = 4.5)
+ind.p<-fviz_pca_ind(iris.pca,geom.ind = "point", col.ind = cla,
+                    palette = c("#b2b9f5","#83fcb4"),
+                    addEllipses = TRUE, 
+                    legend.title = "groups" )
+ggpubr::ggpar(ind.p,title = "")
+dev.off()
+################################################
+rm(list = ls())
+library(data.table)
+library(tidyverse)
+dat <- fread("input/LUSC_TPM_tumor.csv", data.table = F)
+dat <- dat %>% column_to_rownames(var ='V1')
+genes <- fread("input/PRDEGs.csv", data.table = F)
+genes <- genes$V1
+dat <- dat[genes,] %>% as.matrix()
+library(ConsensusClusterPlus)
+results = ConsensusClusterPlus(dat,
+                               maxK = 9,
+                               reps = 500,
+                               pItem = 0.8,
+                               pFeature = 1,
+                               title = "output",
+                               clusterAlg = "km",
+                               distance = "euclidean",
+                               seed = 123,
+                               plot = "pdf")
+
+cluster <- results[[2]][["consensusClass"]] %>% as.data.frame()
+colnames(cluster) <- "cluster"
+cluster$cluster <- ifelse(cluster$cluster == 1, "Cluster1", "Cluster2")
+cluster$sample_id <- rownames(cluster)
+cluster <- cluster %>% 
+  dplyr::select(sample_id, cluster)
+write.csv(cluster, "output/cluster.csv", row.names = F)
+###################################################
+######################WGCNA分析######################==
+rm(list=ls())  
+options(stringsAsFactors = F)
+
+library(WGCNA)           
+library(data.table)
+rt=fread("input/GSE140797_symbol.csv", data.table = F)
+group <- fread("input/GSE140797_group.csv")
+rownames(rt)=rt[,1]
+rt=rt[,2:ncol(rt)]
+rt=as.matrix(rt)
+exp=rt
+exp <- exp[,group$geo_accession]
+all(colnames(exp) == group$geo_accession)
+m.sd <- apply(exp, 1, sd)
+exp <- exp[which(m.sd>quantile(m.sd, probs=seq(0, 1, 0.25))[4]),] 
+dimnames=list(rownames(exp),colnames(exp))
+exp=matrix(as.numeric(as.matrix(exp)),nrow=nrow(exp),dimnames=dimnames)
+
+dim(exp)
+length(colnames(exp))
+
+datExpr0 = as.data.frame(t(exp))
+datExpr0[1:3,1:3]
+gsg = goodSamplesGenes(datExpr0, verbose = 3)
+gsg$allOK
+if (!gsg$allOK){
+    if (sum(!gsg$goodGenes)>0) 
+    printFlush(paste("Removing genes:", paste(names(datExpr0)[!gsg$goodGenes], collapse = ", ")));
+  if (sum(!gsg$goodSamples)>0) 
+    printFlush(paste("Removing samples:", paste(rownames(datExpr0)[!gsg$goodSamples], collapse = ", ")));
+    datExpr0 = datExpr0[gsg$goodSamples, gsg$goodGenes]
+}
+
+
+sampleTree = hclust(dist(datExpr0), method = "average")
+par(cex = 0.6)
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+abline(h = 155, col = "red")
+dev.off()
+clust = cutreeStatic(sampleTree, cutHeight = 155, minSize = 10)
+table(clust)
+keepSamples = (clust==1)
+datExpr0 = datExpr0[keepSamples, ]
+group$group
+traitData=data.frame(Normal=c(rep(1,7),rep(0,7)),
+                     Tumor=c(rep(0,7),rep(1,7)))
+dim(traitData)
+row.names(traitData)=colnames(exp)
+sameSample=intersect(rownames(datExpr0), rownames(traitData))
+datExpr0=datExpr0[sameSample,]
+datTraits=traitData[sameSample,]
+sampleTree2 = hclust(dist(datExpr0), method = "average")
+plot(sampleTree2)
+dev.off()
+traitColors = numbers2colors(datTraits, signed = FALSE)
+plotDendroAndColors(sampleTree2, traitColors,
+                    groupLabels = names(datTraits),
+                    main = "Sample dendrogram and trait heatmap")
+dev.off()
+save(datExpr0, datTraits, file = "output/01-dataInput.RData")
+rm(list = ls())
+load(file = "output/01-dataInput.RData")
+powers = c(1:20)      
+sft = pickSoftThreshold(datExpr0, powerVector = powers, verbose = 5)
+pdf("output/scale_independence.pdf", width = 10, height = 8)
+par(mfrow = c(1,2))
+cex1 = 0.80
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red");
+abline(h=0.80,col="red") 
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+dev.off()
+sft 
+softPower =sft$powerEstimate #最佳power值
+softPower = 19
+adjacency = adjacency(datExpr0, power = softPower)
+TOM = TOMsimilarity(adjacency);
+dissTOM = 1-TOM
+geneTree = hclust(as.dist(dissTOM), method = "average")
+plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",
+     labels = FALSE, hang = 0.04)
+minModuleSize = 50      
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM,
+                            deepSplit = 2, pamRespectsDendro = FALSE,
+                            minClusterSize = minModuleSize);
+table(dynamicMods)
+
+dynamicColors = labels2colors(dynamicMods)
+table(dynamicColors)
+
+pdf("output/Dynamic_Tree.pdf", width = 6, height = 5)
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05,
+                    main = "Gene dendrogram and module colors")
+dev.off()
+
+
+MEList = moduleEigengenes(datExpr0, colors = dynamicColors)
+MEs = MEList$eigengenes
+MEDiss = 1-cor(MEs);
+METree = hclust(as.dist(MEDiss), method = "average")
+plot(METree, main = "Clustering of module eigengenes",
+     xlab = "", sub = "")
+
+MEDissThres = 0.25 #剪切高度可修改
+abline(h=MEDissThres, col = "red")
+
+merge = mergeCloseModules(datExpr0, dynamicColors,
+                          cutHeight = MEDissThres, verbose = 3)
+mergedColors = merge$colors
+mergedMEs = merge$newMEs
+
+pdf("output/Dynamic_merged.pdf", width = 6, height = 5)
+plotDendroAndColors(geneTree, mergedColors,"Merged dynamic",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05,
+                    main = "Gene dendrogram and module colors")
+dev.off()
+
+pdf("output/Dynamic_all.pdf", width = 6, height = 5)
+plotDendroAndColors(geneTree, data.frame(dynamicColors, mergedColors),c("Dynamic Tree Cut","Merged dynamic"),
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05,
+                    main = "Gene dendrogram and module colors")
+dev.off()
+
+moduleColors = mergedColors
+table(moduleColors)
+colorOrder = c("grey", standardColors(50))
+moduleLabels = match(moduleColors, colorOrder)-1
+MEs = mergedMEs
+MEDiss = 1-cor(MEs);
+METree = hclust(as.dist(MEDiss), method = "average")
+
+pdf("output/Module tree.pdf", width = 6, height = 5)
+plot(METree, main = "Clustering of module eigengenes",
+     xlab = "", sub = "")
+dev.off()
+
+MEs_col = MEs
+library(stringr)
+MEs_col = orderMEs(MEs_col)
+pdf("output/Module_cor.pdf", width = 8, height = 8)
+plotEigengeneNetworks(
+  MEs_col,
+  plotDendrograms = F,
+  "Eigengene adiacency heatmap",
+  marDendro = c(3, 3, 2, 4),
+  marHeatmap = c(3, 4, 2, 2),
+  xLabelsAngle = 90
+)
+dev.off()
+
+nGenes = ncol(datExpr0)
+nSamples = nrow(datExpr0)
+moduleTraitCor = cor(MEs, datTraits, use = "p")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
+textMatrix = paste(signif(moduleTraitCor, 2), "\n(",
+                   signif(moduleTraitPvalue, 1), ")", sep = "")
+dim(textMatrix) = dim(moduleTraitCor)
+
+pdf("output/Module_trait.pdf", width = 8, height = 10)
+par(mar = c(4, 10, 2, 1))
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = names(datTraits),
+               yLabels = names(MEs),
+               ySymbols = names(MEs),
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+dev.off()
+
+modNames = substring(names(MEs), 3)
+geneModuleMembership = as.data.frame(cor(datExpr0, MEs, use = "p"))
+MMPvalue = as.data.frame(corPvalueStudent(as.matrix(geneModuleMembership), nSamples))
+names(geneModuleMembership) = paste("MM", modNames, sep="")
+names(MMPvalue) = paste("p.MM", modNames, sep="")
+
+traitNames=names(datTraits)
+geneTraitSignificance = as.data.frame(cor(datExpr0, datTraits, use = "p"))
+GSPvalue = as.data.frame(corPvalueStudent(as.matrix(geneTraitSignificance), nSamples))
+names(geneTraitSignificance) = paste("GS.", traitNames, sep="")
+names(GSPvalue) = paste("p.GS.", traitNames, sep="")
+
+dir.create("output/cor_GS_MM")
+for (trait in traitNames){
+  traitColumn=match(trait,traitNames)  
+  for (module in modNames){
+    column = match(module, modNames)
+    moduleGenes = moduleColors==module
+    if (nrow(geneModuleMembership[moduleGenes,]) > 1){
+      outPdf=paste("output/cor_GS_MM/", trait, "_", module,".pdf",sep="")
+      pdf(file=outPdf,width=7,height=7)
+      par(mfrow = c(1,1))
+      verboseScatterplot(abs(geneModuleMembership[moduleGenes, column]),
+                         abs(geneTraitSignificance[moduleGenes, traitColumn]),
+                         xlab = paste("Module Membership in", module, "module"),
+                         ylab = paste("Gene significance for ",trait),
+                         main = paste("Module membership vs. gene significance\n"),
+                         cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+      abline(v=0.8,h=0.8,col="red")
+      dev.off()
+    }
+  }
+}
+
+dir.create("output/modGenes")
+for (mod in 1:nrow(table(moduleColors))) {  
+  modules = names(table(moduleColors))[mod]
+  probes = colnames(datExpr0)
+  inModule = (moduleColors == modules)
+  modGenes = probes[inModule]
+  write.table(modGenes, file =paste0("output/modGenes/", modules,".txt"),sep="\t",row.names=F,col.names=F,quote=F)
+}
+
+dir.create("output/modGenes_GS_MM")
+GSgenes = rownames(geneTraitSignificance)[abs(geneTraitSignificance[,1]) > 0.8] %>% 
+  intersect(rownames(GSPvalue)[GSPvalue[,1] < 0.05])
+for (mod in 1:nrow(table(moduleColors))) {  
+  modules = names(table(moduleColors))[mod]
+  probes = colnames(datExpr0)
+  inModule = (moduleColors == modules)
+  modGenes = probes[inModule]
+  MMgenes = rownames(geneModuleMembership)[abs(geneModuleMembership[,paste0("MM", modules)]) > 0.8] %>% 
+    intersect(rownames(MMPvalue)[MMPvalue[,paste0("p.MM", modules)] < 0.05])
+  modGenes <- modGenes %>% intersect(GSgenes) %>% intersect(MMgenes)
+  write.table(modGenes, file =paste0("output/modGenes_GS_MM/", modules,".txt"),sep="\t",row.names=F,col.names=F,quote=F)
+}
+
+##############################################################################
+
