@@ -32,7 +32,7 @@ group1 <- pdata1 %>%
   dplyr::filter(group == "normal" | group == "UC") %>% 
   dplyr::arrange(desc(group)) 
 dir.create("GSE33630") 
-data.table::fwrite(group1, "GSE33630/GSE33630_group.csv", row.names = F) 
+data.table::fwrite(group1, "GSE47908/GSE47908_group.csv", row.names = F) 
 library(data.table) 
 GPL1 <- fread('GPL570-55999.txt') 
 colnames(GPL1) 
@@ -75,14 +75,14 @@ library(limma)
 data1_norm <- normalizeBetweenArrays(data1) %>% 
   data.frame()
 boxplot(data1_norm, outline = F, las = 2)
-data.table::fwrite(data1_norm, "GSE33630/GSE33630_Matrix_norm.csv", row.names = T)
+data.table::fwrite(data1_norm, "GSE47908/GSE47908_Matrix_norm.csv", row.names = T)
 #####################################################################
 setwd("C:\\Users\\23802\\Desktop\\UC")
 dir()
-group1 <- read.csv("GSE82107_group.csv", header = TRUE)
-group2 <- read.csv("GSE117999_group.csv", header = TRUE)
-data1_norm <- read.csv("GSE82107_Matrix_norm.csv", header = TRUE)
-data2_norm <- read.csv("GSE117999_Matrix_norm.csv", header = TRUE)
+group1 <- read.csv("GSE9452_group.csv", header = TRUE)
+group2 <- read.csv("GSE27899_group.csv", header = TRUE)
+data1_norm <- read.csv("GSE9452_Matrix_norm.csv", header = TRUE)
+data2_norm <- read.csv("GSE27899_Matrix_norm.csv", header = TRUE)
 data1_norm <- data.frame(data1_norm[,-1], row.names = data1_norm[,1])
 data2_norm <- data.frame(data2_norm[,-1], row.names = data2_norm[,1])
 length(group1$group)
@@ -99,8 +99,8 @@ data2<-data2_norm[aa,]
 count_matrix <- cbind(data1,data2)
 count_matrix<-na.omit(count_matrix)
 
-A <- "GSE46750"
-B <- "GSE98918"
+A <- "GSE9452"
+B <- "GSE27899"
 gs <- factor( c(rep(A, length(group1$group)),
                 rep(B, length(group2$group)),
               levels= c(A,B)))
@@ -168,9 +168,9 @@ dev.off()
 rm(list = ls())
 library(data.table)
 library(tidyverse)
-dat <- fread("input/LUSC_TPM_tumor.csv", data.table = F)
+dat <- fread("input/Combined_Datasets_Matrix.csv", data.table = F)
 dat <- dat %>% column_to_rownames(var ='V1')
-genes <- fread("input/PRDEGs.csv", data.table = F)
+genes <- fread("input/DEGs.csv", data.table = F)
 genes <- genes$V1
 dat <- dat[genes,] %>% as.matrix()
 library(ConsensusClusterPlus)
@@ -199,8 +199,8 @@ options(stringsAsFactors = F)
 
 library(WGCNA)           
 library(data.table)
-rt=fread("input/GSE140797_symbol.csv", data.table = F)
-group <- fread("input/GSE140797_group.csv")
+rt=fread("input/class_symbol.csv", data.table = F)
+group <- fread("input/group.csv")
 rownames(rt)=rt[,1]
 rt=rt[,2:ncol(rt)]
 rt=as.matrix(rt)
@@ -275,7 +275,7 @@ text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
 dev.off()
 sft 
 softPower =sft$powerEstimate #最佳power值
-softPower = 19
+softPower = 12
 adjacency = adjacency(datExpr0, power = softPower)
 TOM = TOMsimilarity(adjacency);
 dissTOM = 1-TOM
@@ -436,4 +436,5 @@ for (mod in 1:nrow(table(moduleColors))) {
 }
 
 ##############################################################################
+
 
